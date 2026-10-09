@@ -1,0 +1,28 @@
+# Ignore all contents of data/
+data/*
+
+*.csv
+*.csv.gz
+*.parquet
+*.db
+*.duckdb
+
+*.pkl
+*.joblib
+*.onnx
+*.pt
+*.pth
+*.h5
+
+# EXCEPT .gitkeep so the folder exists on GitHub
+!.gitkeep
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore Python cache & environment files
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
