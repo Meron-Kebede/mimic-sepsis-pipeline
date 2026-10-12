@@ -42,12 +42,12 @@ def main():
         LEFT JOIN first_day_vitals v ON cohort.stay_id = v.stay_id;
     """
 
-    print("\nExecuting cohort and vitals extraction query...")
+    print("Executing cohort and 24hr vitals extraction query...")
     df = con.execute(query).df()
     
-    print("\nCOHORT SUMMARY")
-    print(f"Total Adult ICU Admissions: {len(df)}")
-    print(f"In-Hospital Mortality Rate: {df['mortality_label'].mean():.2%}")
+    print("\nFEATURE SUMMARY")
+    print(f"Total Rows (Patients): {df.shape[0]}")
+    print(f"Total Feature Columns:  {df.shape[1]}")
     print("\nVitals for First 5 Patients in Cohort:")
     print(df.head())
     
