@@ -50,6 +50,8 @@ def main():
     print(f"Total Feature Columns:  {df.shape[1]}")
     print("\nVitals for First 5 Patients in Cohort:")
     print(df.head())
+
+    return df
     
     
 if __name__ == "__main__":
