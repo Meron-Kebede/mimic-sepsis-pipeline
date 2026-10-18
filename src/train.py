@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier  
+from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
 
 def load_processed_data():
@@ -26,6 +28,33 @@ def train_baseline_logistic_regression(X_train, y_train):
     model.fit(X_train, y_train)
     return model
 
+def train_random_forest(X_train, y_train):
+    print("Training Random Forest Classifier...")
+    model = RandomForestClassifier(
+        n_estimators=100, 
+        random_state=42, 
+        class_weight='balanced'
+    )
+    model.fit(X_train, y_train)
+    return model
+
+def train_xgboost(X_train, y_train):
+    print("Training XGBoost Classifier...")
+    
+    # Calculate scale_pos_weight for class imbalance (~24 / 4 = 6)
+    ratio = (len(y_train) - sum(y_train)) / sum(y_train)
+    
+    model = XGBClassifier(
+        n_estimators=100, 
+        learning_rate=0.05, 
+        max_depth=3, 
+        scale_pos_weight=ratio, 
+        random_state=42,
+        eval_metric='logloss'
+    )
+    model.fit(X_train, y_train)
+    return model
+
 def evaluate_model(model, X_test, y_test, model_name="Model"):
     # Binary predictions (survived = 0, died = 1)
     y_pred = model.predict(X_test)
@@ -48,11 +77,15 @@ def main():
     # 1. Load preprocessed data
     X_train, X_test, y_train, y_test = load_processed_data()
     
-    # 2. Train baseline model
+    # 2. Train models
     lr_model = train_baseline_logistic_regression(X_train, y_train)
+    rf_model = train_random_forest(X_train, y_train)
+    xgb_model = train_xgboost(X_train, y_train)
     
     # 3. Evaluate on unseen test data
-    evaluate_model(lr_model, X_test, y_test, "Logistic Regression Baseline")
+    evaluate_model(lr_model, X_test, y_test, "1. Logistic Regression Baseline")
+    evaluate_model(rf_model, X_test, y_test, "2. Random Forest")
+    evaluate_model(xgb_model, X_test, y_test, "3. XGBoost")  
 
 if __name__ == "__main__":
     main()
