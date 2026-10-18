@@ -1,40 +1,34 @@
-import duckdb
+import pandas as pd
+import os
 
-def main():
-    print("Connecting in-memory DuckDB engine...")
-    con = duckdb.connect()
+def extract_cohort():
+    input_path = 'data/processed/cohort_raw.csv'
+    output_path = 'data/processed/cohort_cleaned.csv'
 
-    query = """
-    WITH icu_adults AS (
-        SELECT 
-            i.subject_id,
-            i.hadm_id,
-            i.stay_id,
-            p.gender,
-            p.anchor_age,
-            i.intime,
-            i.outtime,
-            i.los AS icu_length_of_stay_days,
-            a.hospital_expire_flag AS mortality_label
-        FROM 'data/icu/icustays.csv.gz' i
-        JOIN 'data/hosp/patients.csv.gz' p ON i.subject_id = p.subject_id
-        JOIN 'data/hosp/admissions.csv.gz' a ON i.hadm_id = a.hadm_id
-        WHERE p.anchor_age >= 18
-    )
-    SELECT * 
-    FROM icu_adults
-    ORDER BY subject_id, intime;
-    """
+    if not os.path.exists(input_path):
+        print(f"Cannot find {input_path}.")
+        return
 
-    print("Executing cohort extraction query...")
-    df = con.execute(query).df()
+    print("Loading raw cohort data from local storage...")
+    df = pd.read_csv(input_path)
+    initial_count = len(df)
+
+    # Filter for adult patients (Age >= 18)
+    df = df[df['age'] >= 18].copy()
+    adult_count = len(df)
+
+    # Save cleaned cohort
+    os.makedirs('data/processed', exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print(f"Extracted cohort saved to {output_path}")
 
     print("\nCOHORT SUMMARY")
-    print(f"Total Adult ICU Admissions: {len(df)}")
+    print(f"Records Excluded: {initial_count - adult_count}")
+    print(f"Total Adult ICU Cohort: {len(df)}")
     print(f"In-Hospital Mortality Rate: {df['mortality_label'].mean():.2%}")
     print("\nFirst 5 Patients in Cohort:")
     print(df.head())
 
 
 if __name__ == "__main__":
-    main()
+    extract_cohort()
