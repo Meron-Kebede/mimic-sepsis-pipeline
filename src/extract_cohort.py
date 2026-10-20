@@ -1,21 +1,28 @@
-import pandas as pd
 import os
+from google.cloud import bigquery
 
 def extract_cohort():
-    input_path = 'data/processed/cohort_raw.csv'
     output_path = 'data/processed/cohort_cleaned.csv'
+    sql_path = 'sql/extract_cohort.sql'
 
-    if not os.path.exists(input_path):
-        print(f"Cannot find {input_path}.")
-        return
+    # Load SQL query
+    with open(sql_path, 'r', encoding='utf-8') as file:
+        query = file.read()
 
-    print("Loading raw cohort data from local storage...")
-    df = pd.read_csv(input_path)
-    initial_count = len(df)
+    # Run in BigQuery 
+    print("Extracting Sepsis-3 cohort from BigQuery...")
+    client = bigquery.Client(project='mimic-sepsis-pipeline')
+    df = client.query(query).to_dataframe()
 
-    # Filter for adult patients (Age >= 18)
-    df = df[df['age'] >= 18].copy()
-    adult_count = len(df)
+    # Validate extracted cohort
+    if df.empty:
+        raise ValueError("Extracted cohort is empty")
+    
+    if not df['stay_id'].is_unique:
+        raise ValueError("Duplicate ICU stay IDs found")
+    
+    if df['mortality_label'].isna().any():
+        raise ValueError ("Missing mortality labels found")
 
     # Save cleaned cohort
     os.makedirs('data/processed', exist_ok=True)
@@ -23,12 +30,10 @@ def extract_cohort():
     print(f"Extracted cohort saved to {output_path}")
 
     print("\nCOHORT SUMMARY")
-    print(f"Records Excluded: {initial_count - adult_count}")
-    print(f"Total Adult ICU Cohort: {len(df)}")
+    print(f"Total ICU Stays: {len(df)}")
+    print(f"Unique Patients: {df['subject_id'].nunique()}")
     print(f"In-Hospital Mortality Rate: {df['mortality_label'].mean():.2%}")
-    print("\nFirst 5 Patients in Cohort:")
-    print(df.head())
-
+    
 
 if __name__ == "__main__":
     extract_cohort()
