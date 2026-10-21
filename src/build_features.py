@@ -1,58 +1,36 @@
-import duckdb
+import os
+from google.cloud import bigquery
 
-def main():
-    print("Connecting in-memory DuckDB engine...")
-    con = duckdb.connect()
+def build_features():
+    output_path = 'data/processed/features.csv'
+    sql_path = 'sql/extract_features.sql'
 
-    query = """
-        WITH cohort AS (
-        SELECT
-            i.subject_id,
-            i.stay_id,
-            a.hadm_id,
-            i.intime,
-            p.gender,
-            p.anchor_age,
-            a.hospital_expire_flag AS mortality_label
-        FROM 'data/icu/icustays.csv.gz' i
-        JOIN 'data/hosp/patients.csv.gz' p ON i.subject_id = p.subject_id 
-        JOIN 'data/hosp/admissions.csv.gz' a ON i.hadm_id = a.hadm_id
-        WHERE p.anchor_age >= 18
-        ),
-        first_day_vitals AS (
-        SELECT
-            c.stay_id,
-            MAX(CASE WHEN c.itemid = 220045 THEN c.valuenum END) AS max_heart_rate,
-            MIN(CASE WHEN c.itemid = 220045 THEN c.valuenum END) AS min_heart_rate,
-            AVG(CASE WHEN c.itemid = 220045 THEN c.valuenum END) AS mean_heart_rate,
+    # Load SQL Query
+    with open(sql_path, 'r', encoding='utf-8') as file:
+        query = file.read()
 
-            AVG(CASE WHEN c.itemid = 220050 THEN c.valuenum END) AS mean_sbp,
-            MIN(CASE WHEN c.itemid = 220050 THEN c.valuenum END) AS min_sbp,
+    # Run in BigQuery 
+    print("Extracting first-24-hour vital signs from BigQuery...")
+    client = bigquery.Client(project='mimic-sepsis-pipeline')
+    df = client.query(query).to_dataframe()
 
-            AVG(CASE WHEN c.itemid = 220210 THEN c.valuenum END) AS mean_resp_rate
-        FROM 'data/icu/chartevents.csv.gz' c
-        JOIN cohort ON cohort.stay_id = c.stay_id 
-            WHERE itemid IN (220045, 220050, 220210) 
-            AND c.charttime >= cohort.intime
-            AND c.charttime <= cohort.intime + INTERVAL '24 HOURS'
-        GROUP BY c.stay_id
-        )
-        SELECT *
-        FROM cohort 
-        LEFT JOIN first_day_vitals v ON cohort.stay_id = v.stay_id;
-    """
+    # Validate extracted features
+    if df.empty:
+        raise ValueError("Extracted feature matrix is empty")
 
-    print("Executing cohort and 24hr vitals extraction query...")
-    df = con.execute(query).df()
-    
+    if not df['stay_id'].is_unique:
+        raise ValueError("Duplicate ICU stay IDs found")
+
+    # Save extracted features 
+    os.makedirs('data/processed', exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print(f"Feature matrix saved to {output_path}")    
+
     print("\nFEATURE SUMMARY")
-    print(f"Total Rows (Patients): {df.shape[0]}")
-    print(f"Total Feature Columns:  {df.shape[1]}")
-    print("\nVitals for First 5 Patients in Cohort:")
-    print(df.head())
-
-    return df
-    
+    print(f"Total ICU Stays: {df.shape[0]}")
+    print(f"Total Features:  {df.shape[1] - 1}")
+    print("\nMissing Values Per Feature:")
+    print(df.isna().sum())
     
 if __name__ == "__main__":
-    main()
+    build_features()
