@@ -1,9 +1,13 @@
+import os
+import joblib
 import pandas as pd
-import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier  
 from xgboost import XGBClassifier
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+from sklearn.metrics import (
+    roc_auc_score, average_precision_score, 
+    confusion_matrix, classification_report
+)
 
 def load_processed_data():
     print("Loading processed training and testing datasets...")
@@ -17,14 +21,14 @@ def load_processed_data():
 def train_baseline_logistic_regression(X_train, y_train):
     print("Training Baseline Logistic Regression model...")
     
-    # Class weight='balanced' adjusts for class imbalance (14.29% mortality rate)
+    # Weight classes to account for the lower mortality rate
     model = LogisticRegression(
         random_state=42, 
         max_iter=1000, 
         class_weight='balanced'
     )
     
-    # Fit strictly on training data
+    # Fit only on training data
     model.fit(X_train, y_train)
     return model
 
@@ -41,7 +45,7 @@ def train_random_forest(X_train, y_train):
 def train_xgboost(X_train, y_train):
     print("Training XGBoost Classifier...")
     
-    # Calculate scale_pos_weight for class imbalance (~24 / 4 = 6)
+    # Calculate scale_pos_weight for class imbalance
     ratio = (len(y_train) - sum(y_train)) / sum(y_train)
     
     model = XGBClassifier(
@@ -63,10 +67,12 @@ def evaluate_model(model, X_test, y_test, model_name="Model"):
     y_proba = model.predict_proba(X_test)[:, 1]
     
     auroc = roc_auc_score(y_test, y_proba)
+    ap = average_precision_score(y_test, y_proba)
     cm = confusion_matrix(y_test, y_pred)
     
     print(f"\n{model_name.upper()} EVALUATION")
-    print(f"AUROC Score: {auroc:.4f}")
+    print(f"AUROC: {auroc:.4f}")
+    print(f"Average Precision: {ap:.4f}")
     print("\nConfusion Matrix:")
     print(f"  True Negatives (Survived):  {cm[0][0]}  |  False Positives:  {cm[0][1]}")
     print(f"  False Negatives (Missed):   {cm[1][0]}  |  True Positives (Died): {cm[1][1]}")
@@ -81,8 +87,16 @@ def main():
     lr_model = train_baseline_logistic_regression(X_train, y_train)
     rf_model = train_random_forest(X_train, y_train)
     xgb_model = train_xgboost(X_train, y_train)
+
+    # Save models
+    os.makedirs('models', exist_ok=True)
+
+    joblib.dump(lr_model, 'models/logistic_regression.joblib')
+    joblib.dump(rf_model, 'models/random_forest.joblib')
+    joblib.dump(xgb_model, 'models/xgboost.joblib')
+    print("Saved trained models to models/")
     
-    # 3. Evaluate on unseen test data
+    # 3. Evaluate on held-out test data
     evaluate_model(lr_model, X_test, y_test, "1. Logistic Regression Baseline")
     evaluate_model(rf_model, X_test, y_test, "2. Random Forest")
     evaluate_model(xgb_model, X_test, y_test, "3. XGBoost")  
