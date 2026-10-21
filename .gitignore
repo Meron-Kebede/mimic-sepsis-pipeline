@@ -20,6 +20,9 @@ data/*
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
+# Fitted models and preprocessing artifacts
+models/*.joblib
+
 # Ignore Python cache & environment files
 __pycache__/
 *.pyc

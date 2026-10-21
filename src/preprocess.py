@@ -1,57 +1,117 @@
-import duckdb
+import os
+import joblib
 import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from build_features import main as build_24hr_features
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
 def preprocess_and_split():
-    print("Connecting to DuckDB engine and extracting 24hr cohort vitals...")
-    raw_df = build_24hr_features()
+    cohort_path = 'data/processed/cohort_cleaned.csv'
+    features_path = 'data/processed/features.csv'
 
-    # Drop target answer and identifier columns
-    features = raw_df.drop(columns=['subject_id', 'stay_id', 'hadm_id', 'gender', 'intime', 'mortality_label'])
-    mortality_labels = raw_df['mortality_label']
-    column_names = features.columns.tolist()
-
-    # Stratified 80/20 train-test split
-    train_features, test_features, train_labels, test_labels = train_test_split(
-        features, 
-        mortality_labels, 
-        test_size=0.20, 
-        random_state=42, 
-        stratify=mortality_labels
+    if not os.path.exists(cohort_path):
+        raise FileNotFoundError(
+            f"Cannot find {cohort_path}. Run extract_cohort.py first."
     )
 
-    imputer = SimpleImputer(strategy='median')
-    scaler = StandardScaler()
+    if not os.path.exists(features_path):
+        raise FileNotFoundError(
+            f"Cannot find {features_path}. Run build_features.py first."
+    )
+    
+    print("Loading cohort and feature data...")
+    cohort_df = pd.read_csv(cohort_path)
+    features_df = pd.read_csv(features_path)
 
-    # Fit & transform training set only (prevent data leakage)
-    train_features_imputed = imputer.fit_transform(train_features)
-    train_features_scaled = scaler.fit_transform(train_features_imputed)
+    raw_df = cohort_df.merge(
+        features_df,
+        on='stay_id',
+        how='left',
+        validate='one_to_one'
+    )
 
-    # Transform test set using saved training stats
-    test_features_imputed = imputer.transform(test_features)
-    test_features_scaled = scaler.transform(test_features_imputed)
+    # Separate predictors from the mortality label, IDs, and timestamps
+    features = raw_df.drop(columns=[
+        'subject_id', 'stay_id', 'hadm_id', 
+        'intime', 'mortality_label', 'prediction_time'
+    ])
+    mortality_labels = raw_df['mortality_label']
 
-    # Convert numpy arrays back to labeled DataFrames
-    train_features_df = pd.DataFrame(train_features_scaled, columns=column_names)
-    test_features_df = pd.DataFrame(test_features_scaled, columns=column_names)
+    # Split by patient to prevent leakage across ICU stays
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=0.20,
+        random_state=42
+    )
 
-    # Save datasets to disk
+    train_idx, test_idx = next(
+        splitter.split(raw_df, groups=raw_df['subject_id'])
+    )
+
+    train_features = features.iloc[train_idx]
+    train_labels = mortality_labels.iloc[train_idx]
+
+    test_features = features.iloc[test_idx]
+    test_labels = mortality_labels.iloc[test_idx]
+
+    # Ensure no patient appears in both sets
+    train_patients = set(raw_df.iloc[train_idx]['subject_id'])
+    test_patients = set(raw_df.iloc[test_idx]['subject_id'])
+
+    if not train_patients.isdisjoint(test_patients):
+        raise ValueError("Patient overlap detected between train and test sets")
+
+    # Preprocess numeric and categorical features separately
+    categorical_columns = ['gender', 'admission_type']
+    numeric_columns = train_features.columns.difference(categorical_columns).tolist()
+    
+    
+    numeric_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+
+    categorical_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
+
+    preprocessor = ColumnTransformer([
+        ('numeric', numeric_pipeline, numeric_columns),
+        ('categorical', categorical_pipeline, categorical_columns)
+    ])
+
+    # Fit preprocessing on training set only
+    train_features_processed = preprocessor.fit_transform(train_features)
+    test_features_processed = preprocessor.transform(test_features)
+
+    # Label the transformed feature columns
+    column_names = preprocessor.get_feature_names_out()
+    train_features_df = pd.DataFrame(train_features_processed, columns=column_names)
+    test_features_df = pd.DataFrame(test_features_processed, columns=column_names)
+
+    # Save split datasets to disk
+    os.makedirs('data/processed', exist_ok=True)
     train_features_df.to_csv('data/processed/X_train.csv', index=False)
     test_features_df.to_csv('data/processed/X_test.csv', index=False)
     train_labels.to_csv('data/processed/y_train.csv', index=False)
     test_labels.to_csv('data/processed/y_test.csv', index=False)
-    print("Files successfully saved to 'data/processed/' folder!")
+    print("Saved train/test datasets to data/processed/")
 
-    print("PREPROCESSING COMPLETE")
-    print(f"Training Set  (X_train): {train_features_df.shape[0]} patients, {train_features_df.shape[1]} features")
-    print(f"Testing Set   (X_test):  {test_features_df.shape[0]} patients, {test_features_df.shape[1]} features")
-    print(f"Train Mortality Rate:    {train_labels.mean():.2%}")
-    print(f"Test Mortality Rate:     {test_labels.mean():.2%}")
-    print(f"Missing Values Remaining: {train_features_df.isna().sum().sum()}")
+    # Save fitted preprocessor for model inference
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(preprocessor, 'models/preprocessor.joblib')
+    print("Saved fitted preprocessor to models/")
+
+    print("\nPREPROCESSING COMPLETE")
+    print(f"Training Set: {train_features_df.shape[0]} ICU stays, {len(train_patients)} patients")
+    print(f"Testing Set:  {test_features_df.shape[0]} ICU stays, {len(test_patients)} patients")
+    print(f"Features:     {train_features_df.shape[1]}")
+    print(f"Train Mortality Rate:  {train_labels.mean():.2%}")
+    print(f"Test Mortality Rate:   {test_labels.mean():.2%}")
+    print(f"Missing Values Remaining: {train_features_df.isna().sum().sum() + test_features_df.isna().sum().sum()}")
     
 
 if __name__ == "__main__":
